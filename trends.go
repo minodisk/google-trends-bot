@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -24,10 +23,18 @@ func init() {
 	}
 }
 
-// const OAUTH_ACCESS_TOKEN } = process.env;
+type Body struct {
+	Event Event `json:"event"`
+}
 
-func Trends(w http.ResponseWriter, r *http.Request) {
-	err := trends(w, r)
+type Event struct {
+	ClientMsgID string `json:"client_msg_id"`
+	Text        string `json:"text"`
+	Channel     string `json:"channel"`
+}
+
+func GoogleTrendsBot(w http.ResponseWriter, r *http.Request) {
+	err := googleTrendsBot(w, r)
 	if err != nil {
 		w.Write([]byte(err.Error()))
 		w.WriteHeader(400)
@@ -36,14 +43,28 @@ func Trends(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
-func trends(w http.ResponseWriter, r *http.Request) error {
+func googleTrendsBot(w http.ResponseWriter, r *http.Request) error {
 	d, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return err
 	}
-	// json.Unmarshal(d)
-	fmt.Println(d)
-	return nil
+	body := &Body{}
+	err = json.Unmarshal(d, body)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Request Body: %+v\n", body)
+
+	return FetchAndPostTrends(body.Event)
+}
+
+func FetchAndPostTrends(e Event) error {
+	ts, err := Fetch(e.Text)
+	if err != nil {
+		return err
+	}
+	return PostMessage(ts, e.Channel)
 }
 
 type RSS struct {
@@ -107,18 +128,19 @@ func Fetch(geo string) ([]Trend, error) {
 	return trends, nil
 }
 
-func PostMessage(trends []Trend) error {
+func PostMessage(trends []Trend, channel string) error {
 	as := []Attachment{}
 	for i, t := range trends {
 		as = append(as, Attachment{
-			Title: Title,
-			// fmt.Sprintf("%d. %s (%s)", i+1, t.Title, t.ApproxTraffic)
+			Title:    fmt.Sprintf("%d. %s (%s)", i+1, t.Title, t.ApproxTraffic),
+			Text:     t.Description,
+			ImageURL: t.Picture,
 		})
 	}
-	text := strings.Join(ts, "\n")
+	// text := strings.Join(ts, "\n")
 
 	m := Message{
-		Channel:     "",
+		Channel:     channel,
 		Attachments: as,
 	}
 	b, err := json.Marshal(m)
