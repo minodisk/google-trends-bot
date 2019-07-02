@@ -1,13 +1,11 @@
-package trends_test
+package trends
 
 import (
 	"testing"
-
-	trends "github.com/minodisk/google-trends-bot"
 )
 
 func TestFetchAndPostTrends(t *testing.T) {
-	err := trends.FetchAndPostTrends(trends.Event{
+	err := FetchAndPostTrends(Event{
 		Text:    "US",
 		Channel: "times-dmino-sub",
 	})

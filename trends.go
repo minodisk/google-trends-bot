@@ -9,11 +9,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 )
 
 var (
-	token string
+	token   string
+	mention = regexp.MustCompile(`<@\S+>\s*(\S*)`)
 )
 
 func init() {
@@ -21,6 +24,12 @@ func init() {
 	if token == "" {
 		log.Fatalf("OAUTH_ACCESS_TOKEN is empty")
 	}
+}
+
+type Challenge struct {
+	Token     string `json:"token"`
+	Challenge string `json:"challenge"`
+	Type      string `json:"type"`
 }
 
 type Body struct {
@@ -34,33 +43,48 @@ type Event struct {
 }
 
 func GoogleTrendsBot(w http.ResponseWriter, r *http.Request) {
-	err := googleTrendsBot(w, r)
+	res, err := googleTrendsBot(w, r)
 	if err != nil {
 		w.Write([]byte(err.Error()))
 		w.WriteHeader(400)
 		return
 	}
+	if res != "" {
+		w.Write([]byte(res))
+	}
 	w.WriteHeader(200)
 }
 
-func googleTrendsBot(w http.ResponseWriter, r *http.Request) error {
+func googleTrendsBot(w http.ResponseWriter, r *http.Request) (string, error) {
 	d, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		return err
+		return "", err
 	}
+
+	fmt.Println("Request Body:", string(d))
+
+	challenge := &Challenge{}
+	err = json.Unmarshal(d, challenge)
+	if err == nil {
+		return challenge.Challenge, nil
+	}
+
 	body := &Body{}
 	err = json.Unmarshal(d, body)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	fmt.Printf("Request Body: %+v\n", body)
-
-	return FetchAndPostTrends(body.Event)
+	return "", FetchAndPostTrends(body.Event)
 }
 
 func FetchAndPostTrends(e Event) error {
-	ts, err := Fetch(e.Text)
+	matched := mention.FindStringSubmatch(e.Text)
+	if matched[1] == "" {
+		return fmt.Errorf("geo not found")
+	}
+
+	ts, err := Fetch(matched[1])
 	if err != nil {
 		return err
 	}
@@ -113,27 +137,38 @@ func Fetch(geo string) ([]Trend, error) {
 		return nil, err
 	}
 
-	trends := []Trend{}
-	today := time.Now()
-	for _, trend := range rss.Channel.Items {
-		t, err := time.Parse("Mon, 2 Jan 2006 15:04:05 -0700", trend.PubDate)
-		if err != nil {
-			return nil, err
-		}
-		if t.Year() == today.Year() && t.Month() == today.Month() && t.Day() == today.Day() {
-			trends = append(trends, trend)
-		}
-	}
+	// trends := []Trend{}
+	// today := time.Now()
+	// for _, trend := range rss.Channel.Items {
+	// 	t, err := time.Parse("Mon, 2 Jan 2006 15:04:05 -0700", trend.PubDate)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// 	fmt.Println(t, today)
+	// 	if t.Year() == today.Year() && t.Month() == today.Month() && t.Day() == today.Day() {
+	// 		trends = append(trends, trend)
+	// 	}
+	// }
 
-	return trends, nil
+	return rss.Channel.Items, nil
 }
 
 func PostMessage(trends []Trend, channel string) error {
 	as := []Attachment{}
 	for i, t := range trends {
+		urls := []string{}
+		for _, n := range t.NewsItems {
+			urls = append(urls, n.URL)
+		}
+
+		date, err := time.Parse("Mon, 2 Jan 2006 15:04:05 -0700", t.PubDate)
+		if err != nil {
+			return err
+		}
+
 		as = append(as, Attachment{
-			Title:    fmt.Sprintf("%d. %s (%s)", i+1, t.Title, t.ApproxTraffic),
-			Text:     t.Description,
+			Title:    fmt.Sprintf("%d. %s", i+1, t.Title),
+			Text:     fmt.Sprintf("%s %s\n%s\n%s\n", date.Format("1/2"), t.ApproxTraffic, t.Description, strings.Join(urls, "\n")),
 			ImageURL: t.Picture,
 		})
 	}
