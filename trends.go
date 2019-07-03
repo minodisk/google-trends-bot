@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -63,14 +62,16 @@ func googleTrendsBot(w http.ResponseWriter, r *http.Request) (string, error) {
 
 	fmt.Println("Request Body:", string(d))
 
-	challenge := &Challenge{}
-	err = json.Unmarshal(d, challenge)
-	if err == nil {
-		return challenge.Challenge, nil
+	c := &Challenge{}
+	err = json.Unmarshal(d, c)
+	fmt.Println("Challenge Error:", err)
+	if c.Challenge != "" {
+		return c.Challenge, nil
 	}
 
 	body := &Body{}
 	err = json.Unmarshal(d, body)
+	fmt.Println("Body Error:", err)
 	if err != nil {
 		return "", err
 	}
@@ -79,6 +80,8 @@ func googleTrendsBot(w http.ResponseWriter, r *http.Request) (string, error) {
 }
 
 func FetchAndPostTrends(e Event) error {
+	fmt.Printf("FetchAndPostTrends: %q\n", e)
+
 	matched := mention.FindStringSubmatch(e.Text)
 	if matched[1] == "" {
 		return fmt.Errorf("geo not found")
@@ -122,7 +125,11 @@ type NewsItem struct {
 }
 
 func Fetch(geo string) ([]Trend, error) {
-	resp, err := http.Get(fmt.Sprintf("https://trends.google.co.jp/trends/trendingsearches/daily/rss?geo=%s", geo))
+	u := fmt.Sprintf("https://trends.google.co.jp/trends/trendingsearches/daily/rss?geo=%s", geo)
+
+	fmt.Printf("Fetch: %s\n", u)
+
+	resp, err := http.Get(u)
 	if err != nil {
 		return nil, err
 	}
@@ -154,23 +161,39 @@ func Fetch(geo string) ([]Trend, error) {
 }
 
 func PostMessage(trends []Trend, channel string) error {
+	fmt.Printf("PostMessage: %q, %s\n", trends, channel)
+
 	as := []Attachment{}
 	for i, t := range trends {
-		urls := []string{}
-		for _, n := range t.NewsItems {
-			urls = append(urls, n.URL)
-		}
-
 		date, err := time.Parse("Mon, 2 Jan 2006 15:04:05 -0700", t.PubDate)
 		if err != nil {
 			return err
 		}
 
-		as = append(as, Attachment{
+		a := Attachment{
 			Title:    fmt.Sprintf("%d. %s", i+1, t.Title),
-			Text:     fmt.Sprintf("%s %s\n%s\n%s\n", date.Format("1/2"), t.ApproxTraffic, t.Description, strings.Join(urls, "\n")),
-			ImageURL: t.Picture,
-		})
+			ThumbURL: t.Picture,
+			Fields: []Field{
+				Field{
+					Title: "Date",
+					Value: date.Format("1/2"),
+					Short: true,
+				},
+				Field{
+					Title: "Approx Traffic",
+					Value: t.ApproxTraffic,
+					Short: true,
+				},
+			},
+		}
+		if len(t.NewsItems) > 0 {
+			a.TitleLink = t.NewsItems[0].URL
+		}
+		if t.Description != "" {
+			a.Text = t.Description
+		}
+
+		as = append(as, a)
 	}
 	// text := strings.Join(ts, "\n")
 
@@ -206,7 +229,25 @@ type Message struct {
 }
 
 type Attachment struct {
-	Title    string `json:"title"`
-	Text     string `json:"text"`
-	ImageURL string `json:"image_url"`
+	Fallback   string  `json:"fallback"`    //"Required plain-text summary of the attachment."
+	Color      string  `json:"color"`       //"#2eb886"
+	Pretext    string  `json:"pretext"`     //"Optional text that appears above the attachment block"
+	AuthorName string  `json:"author_name"` //"Bobby Tables"
+	AuthorLink string  `json:"author_link"` //"http://flickr.com/bobby/"
+	AuthorIcon string  `json:"author_icon"` //"http://flickr.com/icons/bobby.jpg"
+	Title      string  `json:"title"`       //"Slack API Documentation"
+	TitleLink  string  `json:"title_link"`  //"https://api.slack.com/"
+	Text       string  `json:"text"`        //"Optional text that appears within the attachment"
+	Fields     []Field `json:"fields"`
+	ImageURL   string  `json:"image_url"`   //"http://my-website.com/path/to/image.jpg"
+	ThumbURL   string  `json:"thumb_url"`   //"http://example.com/path/to/thumb.png"
+	Footer     string  `json:"footer"`      //"Slack API"
+	FooterIcon string  `json:"footer_icon"` //"https://platform.slack-edge.com/img/default_application_icon.png"
+	TS         string  `json:"ts"`          //12345678
+}
+
+type Field struct {
+	Title string `json:"title"` //"Priority"
+	Value string `json:"value"` //"High"
+	Short bool   `json:"short"` //fals
 }
